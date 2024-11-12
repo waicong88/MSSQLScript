@@ -1114,7 +1114,6 @@ BEGIN
 		INNER JOIN OPOR T0 ON T0.DocEntry = T1.DocEntry
 		INNER JOIN OITM T2 ON T2.ItemCode = T1.ItemCode
 		INNER JOIN OWHS T3 ON T3.WhsCode = T1.WhsCode
-		INNER JOIN OBIN T5 ON T5.WhsCode = T3.WhsCode AND T5.AbsEntry = T3.DftBinAbs
 		LEFT JOIN (
 			SELECT D1.Id, D1.Quantity, D1.ShowList, D1.Allocations, D1.WhsCode, D1.LineNum, D0.UserId, D2.BinActivat, D1.BaseEntry
 			FROM IMAppDocumentDraftLine D1
@@ -1126,6 +1125,10 @@ BEGIN
 		ON T4.BaseEntry = T1.DocEntry
 		AND T4.LineNum = T1.LineNum 
 		AND T4.UserId = JSON_VALUE(@Json, '$.userId') 
+		LEFT OUTER JOIN OITW T5A ON T1.ItemCode = T5A.ItemCode AND T1.WhsCode = T5A.WhsCode
+		LEFT OUTER JOIN OWHS T5B ON T1.WhsCode = T5B.WhsCode		
+		LEFT OUTER JOIN OBIN T5 ON T5.WhsCode = T3.WhsCode AND T5.AbsEntry = T3.DftBinAbs 
+		AND T5.AbsEntry = COALESCE(T5A.DftBinAbs, T5B.DftBinAbs, T5C.WhseFirstBinAbs, 0)
 		WHERE T1.DocEntry IN (SELECT [value] FROM STRING_SPLIT(JSON_VALUE(@Json, '$.selected'), ',')) 
 		AND T1.LineStatus = 'O'
 		AND T1.OpenQty > 0
