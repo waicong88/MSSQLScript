@@ -1,10 +1,8 @@
 USE [ECSB_SAP]
 GO
-
-/****** Object:  StoredProcedure [dbo].[IMApp_sp_GetDataList]    Script Date: 2024-05-10 12:13:12 PM ******/
+/****** Object:  StoredProcedure [dbo].[IMApp_sp_GetDataList]    Script Date: 11/11/2024 6:04:22 PM ******/
 SET ANSI_NULLS ON
 GO
-
 SET QUOTED_IDENTIFIER ON
 GO
 
@@ -14,7 +12,7 @@ GO
 -- Create date: <Create Date,,>
 -- Description:	<Description,,>
 -- =============================================
-CREATE   PROCEDURE [dbo].[IMApp_sp_GetDataList] @Type VARCHAR(100), @Json NVARCHAR(MAX)
+ALTER   PROCEDURE [dbo].[IMApp_sp_GetDataList] @Type VARCHAR(100), @Json NVARCHAR(MAX)
 AS
 BEGIN
 	DECLARE @count INT
@@ -77,6 +75,12 @@ BEGIN
 	END
 
 	-- BATCH NUMBER
+	If @Type='CheckBatch'
+	Begin
+		SELECT 1 FROM OBTN WHERE DistNumber = JSON_VALUE(@Json, '$.distNumber')
+					
+	END
+
 	IF @Type = 'BatchInfo'
 	BEGIN
 		SELECT T0.DistNumber, T0.ExpDate, T0.MnfDate, T0.InDate, T0.MnfSerial, T0.LotNumber
@@ -111,6 +115,40 @@ BEGIN
 		FROM OADM T0
 		INNER JOIN OWHS T1 ON T1.WhsCode = T0.DfltWhs
 	END
+
+	-- DELIVERY ORDER DRAFT
+	IF @Type='DeliveryOrdersDraft' AND @Json LIKE '%startDate%' AND @Json LIKE '%endDate%'
+	BEGIN
+		SELECT T0.DocEntry, T0.DocNum, T0.DocDate, T0.CardCode,T0.CardName,T0.U_IMApp_Status
+		FROM ORDR T0
+		LEFT JOIN IMAppDocumentDraftLine T1
+		on T0.DocEntry = T1.BaseEntry and T0.ObjType = '15'
+		WHERE T0.DocStatus = 'O' AND T0.DocDate >= JSON_VALUE(@Json, '$.startDate') AND T0.DocDate <= JSON_VALUE(@Json, '$.endDate') AND T0.DocType = 'I' AND T1.BaseEntry IS NULL
+	END
+
+	-- DELIVERY ORDER DRAFT LINE
+	IF @Type='DeliveryOrdersPackerLine' AND @Json LIKE '%selected%'
+	BEGIN
+		SELECT ISNULL(LOWER(T4.Id), LOWER(NEWID())) AS Id, T0.DocEntry, T1.DocNum, T0.LineNum, T0.ItemCode, T0.Dscription, ISNULL(T0.unitMsr, T0.UomCode) AS Measurement, T0.NumPerMsr, T0.ObjType, 
+			ISNULL(T4.WhsCode, T0.WhsCode) AS WhsCode, ISNULL(T4.BinActivat, T3.BinActivat) AS WhsBinActivat, T0.OpenQty, T1.CardCode, T1.CardName, ISNULL(T4.Quantity, 0) AS ReceiptQty,
+			T4.ShowList, ISNULL(T4.Allocations, '[]') AS Allocations, CASE WHEN T2.ManBtchNum = 'Y' THEN 'BATCH' WHEN T2.ManSerNum = 'Y' THEN 'SERIAL' ELSE 'NONE' END AS ManagedBy, CAST(CASE WHEN ISNULL(T4.Id, '') = '' THEN 0 ELSE 1 END AS BIT) AS IsDraft,
+			COALESCE(T2.U_LItmFlag, 'N') AS [U_LItmFlag], COALESCE(T2.U_ScanSN, 'N') AS [U_ScanSN]
+		FROM RDR1 T0
+		INNER JOIN ORDR T1 ON T1.DocEntry = T0.DocEntry
+		INNER JOIN OITM T2 ON T2.ItemCode = T0.ItemCode
+		INNER JOIN OWHS T3 ON T3.WhsCode = T0.WhsCode
+		LEFT JOIN (
+			SELECT I0.Id, I0.Quantity, I0.ShowList, I0.Allocations, I0.WhsCode, I0.LineNum, I1.UserId, I2.BinActivat, I0.BaseEntry
+			FROM IMAppDocumentDraftLine I0
+			INNER JOIN IMAppDocumentDraft I1 ON I1.Id = I0.DocGuid AND I1.[Status] = 'O'
+			INNER JOIN OWHS I2 ON I2.WhsCode = I0.WhsCode
+			WHERE I0.BaseEntry IN (SELECT [value] FROM STRING_SPLIT(JSON_VALUE(@Json, '$.selected'), ',')) AND I0.LineStatus = 'O'
+		) T4 ON T4.LineNum = T0.LineNum  AND T4.BaseEntry = T0.DocEntry
+		WHERE T0.DocEntry IN (SELECT [value] FROM STRING_SPLIT(JSON_VALUE(@Json, '$.selected'), ',')) AND T0.LineStatus = 'O'	
+		ORDER BY T0.DocEntry, T0.LineNum
+	END
+
+
 
 	-- DELIVERY ORDER
 	IF @Type = 'DeliveryOrders' AND @Json LIKE '%startDate%' AND @Json LIKE '%endDate%'
@@ -211,6 +249,7 @@ BEGIN
 		ORDER BY T0.LineNum
 	END
 
+
 	-- GOODS RECEIPT PO
 	IF @Type = 'GRPO' AND @Json LIKE '%startDate%' AND @Json LIKE '%endDate%'
 	BEGIN
@@ -223,8 +262,9 @@ BEGIN
 	IF @Type = 'GRPOLines' AND @Json LIKE '%selected%'
 	BEGIN
 		SELECT ISNULL(LOWER(T4.Id), LOWER(NEWID())) AS Id, T0.DocEntry, T1.DocNum, T0.LineNum, T0.ItemCode, T0.Dscription, ISNULL(T0.unitMsr, T0.UomCode) AS Measurement, T0.NumPerMsr, T0.ObjType, 
-			ISNULL(T4.WhsCode, T0.WhsCode) AS WhsCode, ISNULL(T4.BinActivat, T3.BinActivat) AS WhsBinActivat, T0.OpenCreQty AS OpenQty, T1.CardCode, T1.CardName, ISNULL(T4.Quantity, 0) AS ReceiptQty,
+			ISNULL(T4.WhsCode, T0.WhsCode) AS WhsCode, ISNULL(T4.BinActivat, T3.BinActivat) AS WhsBinActivat, T0.OpenCreQty AS OpenQty, T1.CardCode, T1.CardName, ISNULL(T4.Quantity, 0) AS ReceiptQty, T0.U_RunningNo,
 			T4.ShowList, ISNULL(T4.Allocations, '[]') AS Allocations, CASE WHEN T2.ManBtchNum = 'Y' THEN 'BATCH' WHEN T2.ManSerNum = 'Y' THEN 'SERIAL' ELSE 'NONE' END AS ManagedBy, CAST(CASE WHEN ISNULL(T4.Id, '') = '' THEN 0 ELSE 1 END AS BIT) AS IsDraft
+			
 		FROM PDN1 T0
 		INNER JOIN OPDN T1 ON T1.DocEntry = T0.DocEntry
 		INNER JOIN OITM T2 ON T2.ItemCode = T0.ItemCode
@@ -239,6 +279,41 @@ BEGIN
 		WHERE T0.DocEntry IN (SELECT [value] FROM STRING_SPLIT(JSON_VALUE(@Json, '$.selected'), ',')) AND T0.LineStatus = 'O'
 		ORDER BY T0.DocEntry, T0.LineNum
 	END
+
+	
+	IF @Type ='GRPODraft'AND @Json LIKE '%startDate%' AND @Json LIKE '%endDate%'
+	BEGIN
+		Select T0.DocEntry, T0.DocNum, T0.DocDate, T0.CardCode, T1.CardName FROM ODRF T0
+		LEFT JOIN OCRD T1 ON T0.CardCode =T1.CardCode
+		Where T0.DocStatus ='O'
+		And	T0.DocDate  >= JSON_VALUE(@Json,'$.startDate')
+		And	T0.DocDate  <= JSON_VALUE(@Json,'$.endDate')
+		AND T0.ObjType = '20'
+	END
+
+	IF @Type = 'GRPODraftLines' AND @Json LIKE '%selected%'
+	BEGIN
+		SELECT ISNULL(LOWER(T4.Id), LOWER(NEWID())) AS Id, T0.DocEntry, T1.DocNum, T0.LineNum, T0.ItemCode, T0.Dscription, ISNULL(T0.unitMsr, T0.UomCode) AS Measurement, T0.NumPerMsr, T0.ObjType, 
+			ISNULL(T4.WhsCode, T0.WhsCode) AS WhsCode, ISNULL(T4.BinActivat, T3.BinActivat) AS WhsBinActivat, T0.OpenCreQty AS OpenQty, T1.CardCode, T1.CardName, ISNULL(T4.Quantity, 0) AS ReceiptQty, T0.U_RunningNo,
+			T4.ShowList, ISNULL(T4.Allocations, '[]') AS Allocations, CASE WHEN T2.ManBtchNum = 'Y' THEN 'BATCH' WHEN T2.ManSerNum = 'Y' THEN 'SERIAL' ELSE 'NONE' END AS ManagedBy, CAST(CASE WHEN ISNULL(T4.Id, '') = '' THEN 0 ELSE 1 END AS BIT) AS IsDraft
+			,T0.U_BatchNumber,T0.U_BatchExpiry,T2.U_Size
+		FROM DRF1 T0
+		INNER JOIN ODRF T1 ON T1.DocEntry = T0.DocEntry
+		INNER JOIN OITM T2 ON T2.ItemCode = T0.ItemCode
+		INNER JOIN OWHS T3 ON T3.WhsCode = T0.WhsCode
+		LEFT JOIN (
+			SELECT I0.Id, I0.Quantity, I0.ShowList, I0.Allocations, I0.WhsCode, I0.LineNum, I1.UserId, I2.BinActivat, I0.BaseEntry
+			FROM IMAppDocumentDraftLine I0
+			INNER JOIN IMAppDocumentDraft I1 ON I1.Id = I0.DocGuid AND I1.[Status] = 'O' AND I0.BaseType = '20'
+			INNER JOIN OWHS I2 ON I2.WhsCode = I0.WhsCode
+			WHERE I0.BaseEntry IN (SELECT [value] FROM STRING_SPLIT(JSON_VALUE(@Json, '$.selected'), ',')) AND I0.LineStatus = 'O'
+		) T4 ON T4.LineNum = T0.LineNum AND T4.UserId = JSON_VALUE(@Json, '$.userId') AND T4.BaseEntry = T0.DocEntry
+		WHERE T0.DocEntry IN (SELECT [value] FROM STRING_SPLIT(JSON_VALUE(@Json, '$.selected'), ',')) AND T0.LineStatus = 'O'
+		ORDER BY T0.DocEntry, T0.LineNum
+	END
+
+
+
 
 	IF @Type = 'GRPOSnB' AND @Json LIKE '%docEntry%'
 	BEGIN
@@ -368,6 +443,13 @@ BEGIN
 
 	IF @Type = 'ItemMaster'
 	BEGIN
+		SELECT ItemName, ItemCode, CASE WHEN ManBtchNum = 'Y' THEN 'BATCH' WHEN ManSerNum = 'Y' THEN 'SERIAL' ELSE 'None' END AS ManagedBy
+		FROM OITM
+		WHERE InvntItem = 'Y'
+	END
+
+	IF @Type = 'ItemMaster'
+	BEGIN	
 		SET @query = 'SELECT ItemName, ItemCode FROM OITM WHERE InvntItem = ''Y'' '
 
 		IF @Json LIKE '%searchText%'
@@ -506,18 +588,18 @@ BEGIN
 				WHERE T0.DocEntry = JSON_VALUE(@Json, '$.docEntry') AND T0.LineNum = JSON_VALUE(@Json, '$.lineNum')
 				GROUP BY T0.ObjType, T1.ItemCode, T1.DocLine, T2.SysNumber, T1.ManagedBy, T0.WhsCode
 			), CTE_ALLOCATED AS (
-				SELECT T0.WhsCode, CASE T0.ManagedBy WHEN 10000044 THEN T2.DistNumber WHEN 10000045 THEN T1.IntrSerial END AS DistNumber, T0.SysNumber AS AbsEntry,
+				SELECT T0.WhsCode, T2.ExpDate,CASE T0.ManagedBy WHEN 10000044 THEN T2.DistNumber WHEN 10000045 THEN T1.IntrSerial END AS DistNumber, T0.SysNumber AS AbsEntry,
 					CASE WHEN V0.AllocQty > 0 THEN V0.AllocQty ELSE CASE WHEN V0.Quantity < 0 THEN V0.Quantity * -1 ELSE V0.Quantity END END AS OnHandQty
 				FROM CTE T0
 				CROSS APPLY (
 					SELECT I0.OrderedQty, I0.AllocQty, I0.Quantity
-					FROM ITL1 I0
+					FROM ITL1 I0 WITH (NOLOCK)
 					WHERE I0.LogEntry = T0.MaxLogEntry AND I0.ItemCode = T0.ItemCode AND I0.SysNumber = T0.SysNumber AND (I0.AllocQty > 0 OR I0.Quantity <> 0)
 				) V0
 				LEFT JOIN OSRI T1 ON T1.SysSerial = T0.SysNumber AND T1.ItemCode = T0.ItemCode AND T0.ManagedBy = 10000045
 				LEFT JOIN OBTN T2 ON T2.SysNumber = T0.SysNumber AND T2.ItemCode = T0.ItemCode AND T0.ManagedBy = 10000044
 			), CTE_AVAILABLE AS (
-				SELECT T1.WhsCode, T0.[BatchNum] AS DistNumber, SUM(CASE T0.[Direction] WHEN 0 THEN 1 ELSE -1 END * T0.[Quantity]) + ISNULL(T3.OnHandQty, 0) AS OnHandQty, T2.AbsEntry, ISNULL(T3.OnHandQty, 0) AS AssignedQty
+				SELECT T1.WhsCode, T0.[BatchNum] AS DistNumber, T2.ExpDate, SUM(CASE T0.[Direction] WHEN 0 THEN 1 ELSE -1 END * T0.[Quantity]) + ISNULL(T3.OnHandQty, 0) AS OnHandQty, T2.AbsEntry, ISNULL(T3.OnHandQty, 0) AS AssignedQty
 				FROM IBT1 T0 
 				INNER JOIN OWHS T1 ON T0.WhsCode = T1.WhsCode
 				INNER JOIN OBTN T2 ON T2.DistNumber = T0.BatchNum
@@ -529,16 +611,16 @@ BEGIN
 				) V0 ON T0.[ItemCode] = V0.[ItemCode] and T1.WhsCode = V0.WhsCode
 				LEFT JOIN CTE_ALLOCATED T3 ON T3.AbsEntry = T2.AbsEntry
 				WHERE T0.[ItemCode] = JSON_VALUE(@Json, '$.itemCode') AND T0.WhsCode = JSON_VALUE(@Json, '$.whsCode')
-				GROUP BY T0.[BatchNum], T1.WhsCode, T0.[ItemCode], T2.AbsEntry, T3.OnHandQty
+				GROUP BY T0.[BatchNum], T1.WhsCode, T0.[ItemCode], T2.AbsEntry, T3.OnHandQty, T2.ExpDate
 				HAVING SUM(CASE T0.[Direction] WHEN 0 THEN 1 ELSE -1 END * T0.[Quantity]) > 0
 			)
 
 			SELECT T0.*
 			FROM (
-				SELECT WhsCode, DistNumber, OnHandQty, AbsEntry, AssignedQty
+				SELECT WhsCode, DistNumber, ExpDate, OnHandQty, AbsEntry, AssignedQty
 				FROM CTE_AVAILABLE
 				UNION
-				SELECT WhsCode, DistNumber, OnHandQty, AbsEntry, OnHandQty AS AssignedQty
+				SELECT WhsCode, DistNumber, ExpDate, OnHandQty, AbsEntry, OnHandQty AS AssignedQty
 				FROM CTE_ALLOCATED 
 				WHERE AbsEntry NOT IN (SELECT AbsEntry FROM CTE_AVAILABLE)
 			) T0
@@ -546,7 +628,7 @@ BEGIN
 		END
 		ELSE
 		BEGIN
-			SELECT T1.WhsCode, T0.[BatchNum] AS DistNumber, SUM(CASE T0.[Direction] WHEN 0 THEN 1 ELSE -1 END * T0.[Quantity]) AS OnHandQty, T2.AbsEntry
+			SELECT T1.WhsCode, T0.[BatchNum] AS DistNumber, SUM(CASE T0.[Direction] WHEN 0 THEN 1 ELSE -1 END * T0.[Quantity]) AS OnHandQty, T2.AbsEntry, T2.ExpDate
 			FROM IBT1 T0 
 			INNER JOIN OWHS T1 ON T0.WhsCode = T1.WhsCode
 			INNER JOIN OBTN T2 ON T2.DistNumber = T0.BatchNum
@@ -557,7 +639,83 @@ BEGIN
 				GROUP BY T1.WhsCode, T0.[ItemCode]
 			) V0 ON T0.[ItemCode] = V0.[ItemCode] and T1.WhsCode = V0.WhsCode 
 			WHERE T0.[ItemCode] = JSON_VALUE(@Json, '$.itemCode') AND T0.WhsCode = JSON_VALUE(@Json, '$.whsCode')
-			GROUP BY T0.[BatchNum], T1.WhsCode, T0.[ItemCode], T2.AbsEntry
+			GROUP BY T0.[BatchNum], T1.WhsCode, T0.[ItemCode], T2.AbsEntry, T2.ExpDate
+			HAVING SUM(CASE T0.[Direction] WHEN 0 THEN 1 ELSE -1 END * T0.[Quantity]) > 0
+			ORDER BY T2.AbsEntry
+		END
+	END
+
+		IF @Type = 'InventoryWarehouseBatch'
+	BEGIN
+		IF @Json LIKE '%batchNumber%'
+		BEGIN
+			SELECT T0.ItemCode, T0.WhsCode, T1.DistNumber, T1.InDate, T0.AbsEntry, T0.Quantity AS OnHandQty 
+			FROM OBTQ T0 
+			LEFT OUTER JOIN OBTN T1 ON T1.AbsEntry = T0.MdAbsEntry
+			WHERE T0.ItemCode = JSON_VALUE(@Json, '$.itemCode') AND T0.WhsCode = JSON_VALUE(@Json, '$.whsCode') AND T0.Quantity > 0 AND T1.DistNumber = JSON_VALUE(@Json, '$.batchNumber')
+		END
+		ELSE IF @Json LIKE '%docEntry%' AND @Json LIKE '%lineNum%'
+		BEGIN
+			WITH CTE AS (
+				SELECT T0.ObjType, MAX(T1.LogEntry) AS [MaxLogEntry], T1.ItemCode, T1.DocLine AS LineNum, T2.SysNumber, T1.ManagedBy, T0.WhsCode
+				FROM WTQ1 T0
+				INNER JOIN OITL T1 WITH (NOLOCK) ON T1.DocEntry = T0.DocEntry AND T1.DocType = T0.ObjType AND T1.DocLine = T0.LineNum
+				INNER JOIN ITL1 T2 WITH (NOLOCK) ON T2.LogEntry = T1.LogEntry
+				WHERE T0.DocEntry = JSON_VALUE(@Json, '$.docEntry') AND T0.LineNum = JSON_VALUE(@Json, '$.lineNum')
+				GROUP BY T0.ObjType, T1.ItemCode, T1.DocLine, T2.SysNumber, T1.ManagedBy, T0.WhsCode
+			), CTE_ALLOCATED AS (
+				SELECT T0.WhsCode, T2.ExpDate,CASE T0.ManagedBy WHEN 10000044 THEN T2.DistNumber WHEN 10000045 THEN T1.IntrSerial END AS DistNumber, T0.SysNumber AS AbsEntry,
+					CASE WHEN V0.AllocQty > 0 THEN V0.AllocQty ELSE CASE WHEN V0.Quantity < 0 THEN V0.Quantity * -1 ELSE V0.Quantity END END AS OnHandQty
+				FROM CTE T0
+				CROSS APPLY (
+					SELECT I0.OrderedQty, I0.AllocQty, I0.Quantity
+					FROM ITL1 I0 WITH (NOLOCK)
+					WHERE I0.LogEntry = T0.MaxLogEntry AND I0.ItemCode = T0.ItemCode AND I0.SysNumber = T0.SysNumber AND (I0.AllocQty > 0 OR I0.Quantity <> 0)
+				) V0
+				LEFT JOIN OSRI T1 ON T1.SysSerial = T0.SysNumber AND T1.ItemCode = T0.ItemCode AND T0.ManagedBy = 10000045
+				LEFT JOIN OBTN T2 ON T2.SysNumber = T0.SysNumber AND T2.ItemCode = T0.ItemCode AND T0.ManagedBy = 10000044
+			), CTE_AVAILABLE AS (
+				SELECT T1.WhsCode, T0.[BatchNum] AS DistNumber, T2.ExpDate, SUM(CASE T0.[Direction] WHEN 0 THEN 1 ELSE -1 END * T0.[Quantity]) + ISNULL(T3.OnHandQty, 0) AS OnHandQty, T2.AbsEntry, ISNULL(T3.OnHandQty, 0) AS AssignedQty
+				FROM IBT1 T0 
+				INNER JOIN OWHS T1 ON T0.WhsCode = T1.WhsCode
+				INNER JOIN OBTN T2 ON T2.DistNumber = T0.BatchNum
+				INNER JOIN (
+					SELECT T0.[ItemCode], T1.WhsCode
+					FROM IBT1 T0 
+					INNER JOIN OWHS T1 ON T0.WhsCode = T1.WhsCode
+					GROUP BY T1.WhsCode, T0.[ItemCode]
+				) V0 ON T0.[ItemCode] = V0.[ItemCode] and T1.WhsCode = V0.WhsCode
+				LEFT JOIN CTE_ALLOCATED T3 ON T3.AbsEntry = T2.AbsEntry
+				WHERE T0.[ItemCode] = JSON_VALUE(@Json, '$.itemCode') AND T0.WhsCode = JSON_VALUE(@Json, '$.whsCode')
+				GROUP BY T0.[BatchNum], T1.WhsCode, T0.[ItemCode], T2.AbsEntry, T3.OnHandQty, T2.ExpDate
+				HAVING SUM(CASE T0.[Direction] WHEN 0 THEN 1 ELSE -1 END * T0.[Quantity]) > 0
+			)
+
+			SELECT T0.*
+			FROM (
+				SELECT WhsCode, DistNumber, ExpDate, OnHandQty, AbsEntry, AssignedQty
+				FROM CTE_AVAILABLE
+				UNION
+				SELECT WhsCode, DistNumber, ExpDate, OnHandQty, AbsEntry, OnHandQty AS AssignedQty
+				FROM CTE_ALLOCATED 
+				WHERE AbsEntry NOT IN (SELECT AbsEntry FROM CTE_AVAILABLE)
+			) T0
+			ORDER BY T0.AbsEntry 
+		END
+		ELSE
+		BEGIN
+			SELECT T1.WhsCode, T0.[BatchNum] AS DistNumber, SUM(CASE T0.[Direction] WHEN 0 THEN 1 ELSE -1 END * T0.[Quantity]) AS OnHandQty, T2.AbsEntry, T2.ExpDate
+			FROM IBT1 T0 
+			INNER JOIN OWHS T1 ON T0.WhsCode = T1.WhsCode
+			INNER JOIN OBTN T2 ON T2.DistNumber = T0.BatchNum
+			INNER JOIN (
+				SELECT T0.[ItemCode], T1.WhsCode
+				FROM IBT1 T0 
+				INNER JOIN OWHS T1 ON T0.WhsCode = T1.WhsCode
+				GROUP BY T1.WhsCode, T0.[ItemCode]
+			) V0 ON T0.[ItemCode] = V0.[ItemCode] and T1.WhsCode = V0.WhsCode 
+			WHERE T0.[ItemCode] = JSON_VALUE(@Json, '$.itemCode') AND T0.WhsCode = JSON_VALUE(@Json, '$.whsCode')
+			GROUP BY T0.[BatchNum], T1.WhsCode, T0.[ItemCode], T2.AbsEntry, T2.ExpDate
 			HAVING SUM(CASE T0.[Direction] WHEN 0 THEN 1 ELSE -1 END * T0.[Quantity]) > 0
 			ORDER BY T2.AbsEntry
 		END
@@ -565,9 +723,35 @@ BEGIN
 
 	IF @Type = 'SOBatchAllocation'
 	BEGIN
+	BEGIN
 		WITH CTE AS (
 			SELECT T0.ObjType, MAX(T1.LogEntry) AS [MaxLogEntry], T1.ItemCode, T1.DocLine AS LineNum, T2.SysNumber, T1.ManagedBy, T0.WhsCode
 			FROM RDR1 T0
+			INNER JOIN OITL T1 WITH (NOLOCK) ON T1.DocEntry = T0.DocEntry AND T1.DocType = T0.ObjType AND T1.DocLine = T0.LineNum
+			INNER JOIN ITL1 T2 WITH (NOLOCK) ON T2.LogEntry = T1.LogEntry
+			WHERE T0.DocEntry = JSON_VALUE(@Json, '$.docEntry') AND T0.LineNum = JSON_VALUE(@Json, '$.lineNum')
+			GROUP BY T0.ObjType, T1.ItemCode, T1.DocLine, T2.SysNumber, T1.ManagedBy, T0.WhsCode
+		)
+		
+		SELECT T0.WhsCode, CASE T0.ManagedBy WHEN 10000044 THEN T2.DistNumber WHEN 10000045 THEN T1.IntrSerial END AS DistNumber, T0.SysNumber AS AbsEntry,
+				CASE WHEN V0.AllocQty > 0 THEN V0.AllocQty ELSE CASE WHEN V0.Quantity < 0 THEN V0.Quantity * -1 ELSE V0.Quantity END END AS OnHandQty, O.U_LitmFlag,O.U_ScanSN
+		FROM CTE T0
+		CROSS APPLY (
+			SELECT I0.OrderedQty, I0.AllocQty, I0.Quantity
+			FROM ITL1 I0
+			WHERE I0.LogEntry = T0.MaxLogEntry AND I0.ItemCode = T0.ItemCode AND I0.SysNumber = T0.SysNumber AND (I0.AllocQty > 0 OR I0.Quantity <> 0)
+		) V0
+		LEFT JOIN OSRI T1 ON T1.SysSerial = T0.SysNumber AND T1.ItemCode = T0.ItemCode AND T0.ManagedBy = 10000045
+		LEFT JOIN OBTN T2 ON T2.SysNumber = T0.SysNumber AND T2.ItemCode = T0.ItemCode AND T0.ManagedBy = 10000044
+		LEFT JOIN OITM O ON O.ItemCode = T0.itemCode
+	END
+	END
+
+	IF @Type = 'InventoryTransferRequestBatchAllocation'
+	BEGIN
+		WITH CTE AS (
+			SELECT T0.ObjType, MAX(T1.LogEntry) AS [MaxLogEntry], T1.ItemCode, T1.DocLine AS LineNum, T2.SysNumber, T1.ManagedBy, T0.WhsCode
+			FROM WTQ1 T0
 			INNER JOIN OITL T1 WITH (NOLOCK) ON T1.DocEntry = T0.DocEntry AND T1.DocType = T0.ObjType AND T1.DocLine = T0.LineNum
 			INNER JOIN ITL1 T2 WITH (NOLOCK) ON T2.LogEntry = T1.LogEntry
 			WHERE T0.DocEntry = JSON_VALUE(@Json, '$.docEntry') AND T0.LineNum = JSON_VALUE(@Json, '$.lineNum')
@@ -661,19 +845,21 @@ BEGIN
 	BEGIN
 		IF @Json LIKE '%batchNumber%'
 		BEGIN
-			SELECT T0.ItemCode, T0.WhsCode, T1.DistNumber, T1.CreateDate, T2.BinCode, T0.OnHandQty, T0.AbsEntry, T0.BinAbs 
+			SELECT T0.ItemCode, T0.WhsCode, T1.DistNumber, T1.CreateDate, T2.BinCode, T0.OnHandQty, T0.AbsEntry, T0.BinAbs, T3.U_LitmFlag, T3.U_ScanSN
 			FROM OBBQ T0
 			LEFT OUTER JOIN OBTN T1 ON T1.ItemCode = T0.ItemCode AND T1.AbsEntry = T0.SnBMDAbs
 			LEFT OUTER JOIN OBIN T2 ON T2.AbsEntry = T0.BinAbs 
+			LEFT OUTER JOIN OITM T3 ON T3.ItemCode = T0.ItemCode
 			WHERE T0.ItemCode = JSON_VALUE(@Json, '$.itemCode') AND T0.WhsCode = JSON_VALUE(@Json, '$.whsCode') AND T0.OnHandQty > 0 AND T1.DistNumber = JSON_VALUE(@Json, '$.batchNumber')
 			ORDER BY InDate
 		END
 		ELSE
 		BEGIN
-			SELECT T0.WhsCode, T1.DistNumber, T2.BinCode, T0.OnHandQty, T0.AbsEntry, T0.BinAbs
+			SELECT T0.WhsCode, T1.DistNumber, T2.BinCode, T0.OnHandQty, T0.AbsEntry, T0.BinAbs,T3.U_LitmFlag,T3.U_ScanSN
 			FROM OBBQ T0
 			LEFT OUTER JOIN OBTN T1 ON T1.ItemCode = T0.ItemCode AND T1.AbsEntry = T0.SnBMDAbs
 			LEFT OUTER JOIN OBIN T2 ON T2.AbsEntry = T0.BinAbs 
+			LEFT OUTER JOIN OITM T3 ON T3.itemCode = T0.ItemCode
 			WHERE T0.ItemCode = JSON_VALUE(@Json, '$.itemCode') AND T0.WhsCode = JSON_VALUE(@Json, '$.whsCode') AND T0.OnHandQty > 0
 			ORDER BY T1.InDate
 		END
@@ -879,30 +1065,84 @@ BEGIN
 	-- PURCHASE ORDER
 	IF @Type = 'PurchaseOrders' AND @Json LIKE '%startDate%' AND @Json LIKE '%endDate%'
 	BEGIN
-		SELECT DocEntry, DocNum, DocDate, CardCode, CardName
-		FROM OPOR
-		WHERE DocStatus = 'O' AND DocDate >= JSON_VALUE(@Json, '$.startDate') AND DocDate <= JSON_VALUE(@Json, '$.endDate') AND DocType = 'I'
+		SELECT MAX(T0.DocEntry) As DocEntry,MAX(T0.DocNum)AS[DocNum], T0.DocDate, T0.CardCode, T0.CardName, CAST(T0.U_IMApp_Status AS NVARCHAR) AS [U_IMApp_Status]
+		FROM OPOR T0
+		INNER JOIN POR1 T1 ON T0.DocEntry = T1.DocEntry
+		INNER JOIN OITM T2 ON T1.ItemCode = T2.ItemCode
+		LEFT OUTER JOIN DRF1 D1 ON T1.DocEntry = D1.BaseEntry AND T1.LineNum = D1.BaseLine AND T1.ObjType = 22
+		LEFT OUTER JOIN ODRF D0 ON D1.DocEntry = D0.DocEntry
+		WHERE T0.DocStatus = 'O' 
+		AND T0.Confirmed ='Y' 
+		AND T0.DocDate >= JSON_VALUE(@Json, '$.startDate') 
+		AND T0.DocDate <= JSON_VALUE(@Json, '$.endDate')
+		AND T1.LineStatus = 'O'
+		AND T1.OpenQty > 0
+		AND T2.InvntItem = 'Y'
+		AND (D1.BaseEntry IS NULL OR D0.DocStatus ='C')
+		GROUP BY T0.[DocDate],T0.[CardCode],T0.[CardName],CAST(T0.[U_IMApp_Status] AS NVARCHAR)
+		ORDER BY MAX(T0.[DocEntry])
 	END
 
 	IF @Type = 'PurchaseOrderLines' AND @Json LIKE '%selected%'
 	BEGIN
-		SELECT ISNULL(LOWER(T4.Id), LOWER(NEWID())) AS Id, T0.DocEntry, T1.DocNum, T0.LineNum, T0.ItemCode, T0.Dscription, ISNULL(T0.unitMsr, T0.UomCode) AS Measurement, T0.NumPerMsr, 
-			T0.ObjType, ISNULL(T4.WhsCode, T0.WhsCode) AS WhsCode, ISNULL(T4.BinActivat, T3.BinActivat) AS WhsBinActivat, T0.OpenQty, T1.CardCode, T1.CardName, ISNULL(T4.Quantity, 0) AS ReceiptQty, 
-			T4.ShowList, ISNULL(T4.Allocations, '[]') AS Allocations, CASE WHEN T2.ManBtchNum = 'Y' THEN 'BATCH' WHEN T2.ManSerNum = 'Y' THEN 'SERIAL' ELSE 'NONE' END AS ManagedBy, CAST(CASE WHEN ISNULL(T4.Id, '') = '' THEN 0 ELSE 1 END AS BIT) AS IsDraft
-		FROM POR1 T0
-		INNER JOIN OPOR T1 ON T1.DocEntry = T0.DocEntry
-		INNER JOIN OITM T2 ON T2.ItemCode = T0.ItemCode
-		INNER JOIN OWHS T3 ON T3.WhsCode = T0.WhsCode
+		SELECT ISNULL(LOWER(T4.Id), LOWER(NEWID())) AS Id
+		, T1.DocEntry
+		, T0.DocNum
+		, T1.LineNum
+		, T1.ItemCode
+		, T1.Dscription
+		, ISNULL(T1.unitMsr, T1.UomCode) AS Measurement
+		, T1.NumPerMsr
+		, T1.ObjType
+		, ISNULL(T4.WhsCode, T1.WhsCode) AS WhsCode
+		, ISNULL(T4.BinActivat, T3.BinActivat) AS WhsBinActivat
+		, T1.OpenQty
+		, T0.CardCode
+		, T0.CardName
+		, ISNULL(T4.Quantity, 0) AS ReceiptQty
+		, T4.ShowList
+		, ISNULL(T4.Allocations, '[]') AS Allocations
+		, CASE WHEN T2.ManBtchNum = 'Y' THEN 'BATCH' WHEN T2.ManSerNum = 'Y' THEN 'SERIAL' ELSE 'NONE' END AS ManagedBy
+		, CAST(CASE WHEN ISNULL(T4.Id, '') = '' THEN 0 ELSE 1 END AS BIT) AS IsDraft
+		, T1.U_BatchNumber
+		, T1.U_BatchExpiry
+		, T1.U_SerialNumber
+		, T1.U_PalletNumber
+		, T5.AbsEntry
+		, T5.BinCode
+		FROM POR1 T1
+		INNER JOIN OPOR T0 ON T0.DocEntry = T1.DocEntry
+		INNER JOIN OITM T2 ON T2.ItemCode = T1.ItemCode
+		INNER JOIN OWHS T3 ON T3.WhsCode = T1.WhsCode
+		INNER JOIN OBIN T5 ON T5.WhsCode = T3.WhsCode
 		LEFT JOIN (
-			SELECT I0.Id, I0.Quantity, I0.ShowList, I0.Allocations, I0.WhsCode, I0.LineNum, I1.UserId, I2.BinActivat, I0.BaseEntry
-			FROM IMAppDocumentDraftLine I0
-			INNER JOIN IMAppDocumentDraft I1 ON I1.Id = I0.DocGuid AND I1.[Status] = 'O' AND I1.ObjType = 20
-			INNER JOIN OWHS I2 ON I2.WhsCode = I0.WhsCode
-			WHERE I0.BaseEntry IN (SELECT [value] FROM STRING_SPLIT(JSON_VALUE(@Json, '$.selected'), ',')) AND I0.LineStatus = 'O'
-		) T4 ON T4.LineNum = T0.LineNum AND T4.UserId = JSON_VALUE(@Json, '$.userId') AND T4.BaseEntry = T0.DocEntry
-		WHERE T0.DocEntry IN (SELECT [value] FROM STRING_SPLIT(JSON_VALUE(@Json, '$.selected'), ',')) AND T0.LineStatus = 'O'
-		ORDER BY T0.DocEntry, T0.LineNum
+			SELECT D1.Id, D1.Quantity, D1.ShowList, D1.Allocations, D1.WhsCode, D1.LineNum, D0.UserId, D2.BinActivat, D1.BaseEntry
+			FROM IMAppDocumentDraftLine D1
+			INNER JOIN IMAppDocumentDraft D0 ON D0.Id = D1.DocGuid AND D0.[Status] = 'O' AND D0.ObjType = 20
+			INNER JOIN OWHS D2 ON D2.WhsCode = D1.WhsCode
+			WHERE D1.BaseEntry IN (SELECT [value] FROM STRING_SPLIT(JSON_VALUE(@Json, '$.selected'), ',')) 
+			AND D1.LineStatus = 'O'
+		) T4 
+		ON T4.BaseEntry = T1.DocEntry
+		AND T4.LineNum = T1.LineNum 
+		AND T4.UserId = JSON_VALUE(@Json, '$.userId') 
+		WHERE T1.DocEntry IN (SELECT [value] FROM STRING_SPLIT(JSON_VALUE(@Json, '$.selected'), ',')) 
+		AND T1.LineStatus = 'O'
+		AND T1.OpenQty > 0
+		AND T2.InvntItem = 'Y'
+		AND T5.AbsEntry = '1'
+		AND T3.DftBinAbs= '1'
+
+		ORDER BY T1.DocEntry, T1.LineNum
 	END
+
+	-- Pallet List
+	If @Type = 'PalletList'
+	Begin
+		SELECT Code, Name
+		FROM [@PALLET]
+	END
+
 
 	-- RESOURCES
 	IF @Type = 'Resources'
@@ -940,33 +1180,68 @@ BEGIN
 		WHERE T0.DocEntry IN (SELECT [value] FROM STRING_SPLIT(JSON_VALUE(@Json, '$.selected'), ',')) AND T0.LineStatus = 'O'
 		ORDER BY T0.DocEntry, T0.LineNum
 	END
-
-	-- SALES ORDER
+	
+	-- Delivery Order
 	IF @Type = 'SalesOrders' AND @Json LIKE '%startDate%' AND @Json LIKE '%endDate%'
 	BEGIN
-		SELECT DocEntry, DocNum, DocDate, CardCode, CardName
-		FROM ORDR
-		WHERE DocStatus = 'O' AND DocDate >= JSON_VALUE(@Json, '$.startDate') AND DocDate <= JSON_VALUE(@Json, '$.endDate') AND DocType = 'I'
+		SELECT MAX(T0.DocEntry) AS [DocEntry], MAX(T0.DocNum) AS [DocNum], T0.DocDate, T0.CardCode,T0.CardName, CAST(T0.U_IMApp_Status AS NVARCHAR) AS [U_IMApp_Status]
+		FROM ORDR T0
+		INNER JOIN RDR1 T1 ON T0.DocEntry = T1.DocEntry 
+		INNER JOIN OITM T2 ON T1.ItemCode = T2.ItemCode
+		LEFT OUTER JOIN DRF1 D1 ON T1.DocEntry = D1.BaseEntry AND T1.LineNum = D1.BaseLine AND T1.ObjType = 15 
+		LEFT OUTER JOIN ODRF D0 ON D1.DocEntry = D0.DocEntry
+		WHERE T0.DocStatus = 'O' 
+		AND T0.Confirmed ='Y' 
+		AND T0.DocDate >= JSON_VALUE(@Json, '$.startDate') 
+		AND T0.DocDate <= JSON_VALUE(@Json, '$.endDate')
+		AND T1.LineStatus = 'O'
+		AND T1.OpenQty > 0
+		AND T2.InvntItem = 'Y'
+		AND (D1.BaseEntry IS NULL OR D0.DocStatus ='C')
+		GROUP BY T0.[DocDate], T0.[CardCode], T0.[CardName], CAST(T0.[U_IMApp_Status] AS NVARCHAR)
+		ORDER BY MAX(T0.[DocEntry])
 	END
 
 	IF @Type = 'SalesOrderLines' AND @Json LIKE '%selected%'
 	BEGIN
-		SELECT ISNULL(LOWER(T4.Id), LOWER(NEWID())) AS Id, T0.DocEntry, T1.DocNum, T0.LineNum, T0.ItemCode, T0.Dscription, ISNULL(T0.unitMsr, T0.UomCode) AS Measurement, T0.NumPerMsr, T0.ObjType, 
-			ISNULL(T4.WhsCode, T0.WhsCode) AS WhsCode, ISNULL(T4.BinActivat, T3.BinActivat) AS WhsBinActivat, T0.OpenQty, T1.CardCode, T1.CardName, ISNULL(T4.Quantity, 0) AS ReceiptQty,
-			T4.ShowList, ISNULL(T4.Allocations, '[]') AS Allocations, CASE WHEN T2.ManBtchNum = 'Y' THEN 'BATCH' WHEN T2.ManSerNum = 'Y' THEN 'SERIAL' ELSE 'NONE' END AS ManagedBy, CAST(CASE WHEN ISNULL(T4.Id, '') = '' THEN 0 ELSE 1 END AS BIT) AS IsDraft
-		FROM RDR1 T0
-		INNER JOIN ORDR T1 ON T1.DocEntry = T0.DocEntry
-		INNER JOIN OITM T2 ON T2.ItemCode = T0.ItemCode
-		INNER JOIN OWHS T3 ON T3.WhsCode = T0.WhsCode
+		SELECT ISNULL(LOWER(T4.Id), LOWER(NEWID())) AS Id
+		, T1.DocEntry
+		, T0.DocNum
+		, T1.LineNum
+		, T1.ItemCode
+		, T1.Dscription
+		, ISNULL(T1.unitMsr, T1.UomCode) AS Measurement
+		, T1.NumPerMsr
+		, T1.ObjType
+		, ISNULL(T4.WhsCode, T1.WhsCode) AS WhsCode
+		, ISNULL(T4.BinActivat, T3.BinActivat) AS WhsBinActivat
+		, T1.OpenQty
+		, T0.CardCode
+		, T0.CardName
+		, ISNULL(T4.Quantity, 0) AS ReceiptQty
+		, T4.ShowList, ISNULL(T4.Allocations, '[]') AS Allocations
+		, CASE WHEN T2.ManBtchNum = 'Y' THEN 'BATCH' WHEN T2.ManSerNum = 'Y' THEN 'SERIAL' ELSE 'NONE' END AS ManagedBy
+		, CAST(CASE WHEN ISNULL(T4.Id, '') = '' THEN 0 ELSE 1 END AS BIT) AS IsDraft
+		, COALESCE(T2.U_LItmFlag, 'N') AS [U_LItmFlag]
+		, COALESCE(T2.U_ScanSN, 'N') AS [U_ScanSN]
+		FROM ORDR T0
+		INNER JOIN RDR1 T1 ON T0.DocEntry = T1.DocEntry
+		INNER JOIN OITM T2 ON T2.ItemCode = T1.ItemCode
+		INNER JOIN OWHS T3 ON T3.WhsCode = T1.WhsCode
 		LEFT JOIN (
-			SELECT I0.Id, I0.Quantity, I0.ShowList, I0.Allocations, I0.WhsCode, I0.LineNum, I1.UserId, I2.BinActivat, I0.BaseEntry
-			FROM IMAppDocumentDraftLine I0
-			INNER JOIN IMAppDocumentDraft I1 ON I1.Id = I0.DocGuid AND I1.[Status] = 'O'
-			INNER JOIN OWHS I2 ON I2.WhsCode = I0.WhsCode
-			WHERE I0.BaseEntry IN (SELECT [value] FROM STRING_SPLIT(JSON_VALUE(@Json, '$.selected'), ',')) AND I0.LineStatus = 'O'
-		) T4 ON T4.LineNum = T0.LineNum AND T4.UserId = JSON_VALUE(@Json, '$.userId') AND T4.BaseEntry = T0.DocEntry
-		WHERE T0.DocEntry IN (SELECT [value] FROM STRING_SPLIT(JSON_VALUE(@Json, '$.selected'), ',')) AND T0.LineStatus = 'O'
-		ORDER BY T0.DocEntry, T0.LineNum
+			SELECT D1.Id, D1.Quantity, D1.ShowList, D1.Allocations, D1.WhsCode, D1.LineNum, D0.UserId, D2.BinActivat, D1.BaseEntry
+			FROM IMAppDocumentDraftLine D1
+			INNER JOIN IMAppDocumentDraft D0 ON D0.Id = D1.DocGuid AND D0.[Status] = 'O'
+			INNER JOIN OWHS D2 ON D2.WhsCode = D1.WhsCode
+			WHERE D1.BaseEntry IN (SELECT [value] FROM STRING_SPLIT(JSON_VALUE(@Json, '$.selected'), ',')) AND D1.LineStatus = 'O'
+		) T4 ON T4.BaseEntry = T1.DocEntry 
+		AND T4.LineNum = T1.LineNum 
+		AND T4.UserId = JSON_VALUE(@Json, '$.userId') 
+		WHERE T1.DocEntry IN (SELECT [value] FROM STRING_SPLIT(JSON_VALUE(@Json, '$.selected'), ',')) 
+		AND T1.LineStatus = 'O'
+		AND T1.OpenQty > 0
+		AND T2.InvntItem = 'Y'
+		ORDER BY T1.DocEntry, T1.LineNum
 	END
 
 	-- SERIES
@@ -1066,6 +1341,13 @@ BEGIN
 		WHERE T0.Direction = 0 AND T1.DocEntry = JSON_VALUE(@Json, '$.docEntry') AND T1.LineNum = JSON_VALUE(@Json, '$.lineNum')
 	END
 
+	--SAP Users
+	IF @Type ='SAPUsers'
+	Begin
+		Select USER_CODE, U_Name
+		FROM OUSR
+	END
+
 	-- WAREHOUSES
 	IF @Type = 'Warehouses'
 	BEGIN
@@ -1079,7 +1361,7 @@ BEGIN
 		BEGIN
 			SELECT WhsCode, WhsName, BinActivat, U_IsGIT
 			FROM OWHS 
-			WHERE U_IsGIT = 'N'
+			WHERE ISNULL(U_IsGIT, 'N') = 'N'
 		END
 	END
 
@@ -1113,6 +1395,3 @@ BEGIN
 		INNER JOIN OWHS T1 ON T1.WhsCode = T0.DfltWhs 
 	END
 END
-GO
-
-
