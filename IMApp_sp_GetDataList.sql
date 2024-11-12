@@ -1114,7 +1114,7 @@ BEGIN
 		INNER JOIN OPOR T0 ON T0.DocEntry = T1.DocEntry
 		INNER JOIN OITM T2 ON T2.ItemCode = T1.ItemCode
 		INNER JOIN OWHS T3 ON T3.WhsCode = T1.WhsCode
-		INNER JOIN OBIN T5 ON T5.WhsCode = T3.WhsCode
+		INNER JOIN OBIN T5 ON T5.WhsCode = T3.WhsCode AND T5.AbsEntry = T3.DftBinAbs
 		LEFT JOIN (
 			SELECT D1.Id, D1.Quantity, D1.ShowList, D1.Allocations, D1.WhsCode, D1.LineNum, D0.UserId, D2.BinActivat, D1.BaseEntry
 			FROM IMAppDocumentDraftLine D1
@@ -1130,9 +1130,6 @@ BEGIN
 		AND T1.LineStatus = 'O'
 		AND T1.OpenQty > 0
 		AND T2.InvntItem = 'Y'
-		AND T5.AbsEntry = '1'
-		AND T3.DftBinAbs= '1'
-
 		ORDER BY T1.DocEntry, T1.LineNum
 	END
 
